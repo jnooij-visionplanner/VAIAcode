@@ -2,6 +2,24 @@
 
 T3 Code is a minimal web GUI for coding agents (currently Codex and Claude, more coming soon).
 
+## Repository overview
+
+This repository is a Bun + Turborepo monorepo for T3 Code. The main pieces are:
+
+- `apps/server`: the Node.js WebSocket server that wraps `codex app-server`, manages provider sessions, and serves the web UI
+- `apps/web`: the React + Vite client for sessions, conversations, and provider events
+- `apps/desktop`: the Electron desktop shell around the shared app experience
+- `apps/marketing`: the marketing site
+- `packages/contracts`: shared schemas and TypeScript contracts for WebSocket protocol, orchestration events, and models
+- `packages/shared`: shared runtime utilities used by the server and web apps
+
+The codebase is currently TypeScript-first and centers on a server-driven architecture where the browser talks to the server over WebSockets, and the server coordinates provider runtimes such as Codex.
+
+For a deeper walkthrough, see:
+
+- [Workspace layout](./.docs/workspace-layout.md)
+- [Architecture](./.docs/architecture.md)
+
 ## Installation
 
 > [!WARNING]
