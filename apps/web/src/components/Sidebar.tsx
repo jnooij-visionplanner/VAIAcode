@@ -59,7 +59,7 @@ import {
 } from "@t3tools/contracts/settings";
 import { usePrimaryEnvironmentId } from "../environments/primary";
 import { isElectron } from "../env";
-import { APP_STAGE_LABEL, APP_VERSION } from "../branding";
+import { APP_BASE_NAME, APP_STAGE_LABEL, APP_VERSION } from "../branding";
 import { isTerminalFocused } from "../lib/terminalFocus";
 import { isMacPlatform, newCommandId } from "../lib/utils";
 import {
@@ -2204,18 +2204,50 @@ const SidebarProjectListRow = memo(function SidebarProjectListRow(props: Sidebar
   );
 });
 
-function T3Wordmark() {
+function VaiaLogo() {
   return (
     <svg
-      aria-label="T3"
-      className="h-2.5 w-auto shrink-0 text-foreground"
-      viewBox="15.5309 37 94.3941 56.96"
+      aria-label="Vaia"
+      className="h-4 w-4 shrink-0"
+      viewBox="0 0 200 200"
+      fill="none"
       xmlns="http://www.w3.org/2000/svg"
     >
-      <path
-        d="M33.4509 93V47.56H15.5309V37H64.3309V47.56H46.4109V93H33.4509ZM86.7253 93.96C82.832 93.96 78.9653 93.4533 75.1253 92.44C71.2853 91.3733 68.032 89.88 65.3653 87.96L70.4053 78.04C72.5386 79.5867 75.0186 80.8133 77.8453 81.72C80.672 82.6267 83.5253 83.08 86.4053 83.08C89.6586 83.08 92.2186 82.44 94.0853 81.16C95.952 79.88 96.8853 78.12 96.8853 75.88C96.8853 73.7467 96.0586 72.0667 94.4053 70.84C92.752 69.6133 90.0853 69 86.4053 69H80.4853V60.44L96.0853 42.76L97.5253 47.4H68.1653V37H107.365V45.4L91.8453 63.08L85.2853 59.32H89.0453C95.9253 59.32 101.125 60.8667 104.645 63.96C108.165 67.0533 109.925 71.0267 109.925 75.88C109.925 79.0267 109.099 81.9867 107.445 84.76C105.792 87.48 103.259 89.6933 99.8453 91.4C96.432 93.1067 92.0586 93.96 86.7253 93.96Z"
-        fill="currentColor"
-      />
+      <g clipPath="url(#vaia-logo-clip)">
+        <path
+          d="M130.725 8.9404C122.205 3.0054 112.045 -0.119599 101.665 0.000401265H100.75C89.6249 0.0654013 78.7249 3.1554 69.2249 8.9404C46.9349 26.7154 26.7299 46.9504 8.98491 69.2604C-3.82509 86.6454 -2.13509 113.175 8.98491 130.77C26.7499 153.04 46.9549 173.25 69.2249 191.015C86.8199 202.135 113.28 203.825 130.73 191.015C153 173.25 173.205 153.04 190.97 130.77C202.16 113.175 203.85 86.6404 190.97 69.2604C173.225 46.9504 153.02 26.7154 130.73 8.9454L130.725 8.9404Z"
+          fill="url(#vaia-logo-gradient)"
+        />
+        <path
+          opacity="0.6"
+          d="M25.7305 94.2648C25.7305 51.9398 39.0255 42.7148 100.045 42.7148C161.065 42.7148 174.36 51.9348 174.36 94.2648C174.36 136.59 161.065 145.815 100.045 145.815C39.0255 145.815 25.7305 136.595 25.7305 94.2648Z"
+          fill="black"
+        />
+        <path
+          d="M46.9053 116.17H57.7603C58.9653 116.17 60.1453 115.82 61.1753 115.175C62.2053 114.53 63.0453 113.605 63.6003 112.5L72.8003 94.0905L82.0003 112.5C82.5503 113.6 83.3803 114.525 84.4003 115.17C85.4203 115.815 86.5953 116.165 87.7903 116.17H98.6953L93.8253 106.11L89.6903 97.9105L78.7353 76.0305C78.1803 74.9255 77.3453 73.9955 76.3153 73.3455C75.2853 72.7005 74.1003 72.3555 72.8953 72.3555C71.6853 72.3555 70.4953 72.7005 69.4553 73.3455C68.4153 73.9905 67.5703 74.9205 67.0053 76.0255L51.9653 106.205L46.9053 116.165V116.17Z"
+          fill="white"
+        />
+        <path
+          d="M153.196 90.4203C153.196 95.2104 151.356 99.8054 148.076 103.19C144.801 106.575 140.356 108.48 135.716 108.48C131.101 108.445 126.691 106.53 123.441 103.145C120.191 99.7603 118.366 95.1903 118.366 90.4203C118.351 88.0553 118.786 85.7103 119.651 83.5203C120.516 81.3303 121.791 79.3404 123.406 77.6604C125.021 75.9804 126.936 74.6503 129.051 73.7403C131.166 72.8303 133.431 72.3604 135.721 72.3604C140.356 72.3604 144.801 74.2604 148.081 77.6504C151.361 81.0354 153.201 85.6303 153.201 90.4203H153.196Z"
+          fill="white"
+        />
+      </g>
+      <defs>
+        <linearGradient
+          id="vaia-logo-gradient"
+          x1="4.97491"
+          y1="125.555"
+          x2="195.59"
+          y2="74.7654"
+          gradientUnits="userSpaceOnUse"
+        >
+          <stop stopColor="#00B3B8" />
+          <stop offset="1" stopColor="#008DA0" />
+        </linearGradient>
+        <clipPath id="vaia-logo-clip">
+          <rect width="200" height="200" fill="white" />
+        </clipPath>
+      </defs>
     </svg>
   );
 }
@@ -2373,9 +2405,9 @@ const SidebarChromeHeader = memo(function SidebarChromeHeader({
               className="ml-1 flex min-w-0 flex-1 cursor-pointer items-center gap-1 rounded-md outline-hidden ring-ring transition-colors hover:text-foreground focus-visible:ring-2"
               to="/"
             >
-              <T3Wordmark />
-              <span className="truncate text-sm font-medium tracking-tight text-muted-foreground">
-                Code
+              <VaiaLogo />
+              <span className="truncate text-sm font-medium tracking-tight text-foreground">
+                {APP_BASE_NAME}
               </span>
               <span className="rounded-full bg-muted/50 px-1.5 py-0.5 text-[8px] font-medium uppercase tracking-[0.18em] text-muted-foreground/60">
                 {APP_STAGE_LABEL}

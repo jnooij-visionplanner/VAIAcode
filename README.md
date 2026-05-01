@@ -1,11 +1,11 @@
-# T3 Code
+# Vaia Code
 
-T3 Code is a minimal web GUI for coding agents (currently Codex and Claude, more coming soon).
+Vaia Code is a minimal web GUI for coding agents (currently Codex and Claude, more coming soon).
 
 ## Installation
 
 > [!WARNING]
-> T3 Code currently supports Codex, Claude, and OpenCode.
+> Vaia Code currently supports Codex, Claude, and OpenCode.
 > Install and authenticate at least one provider before use:
 >
 > - Codex: install [Codex CLI](https://developers.openai.com/codex/cli) and run `codex login`
