@@ -9,6 +9,7 @@
  *
  * @module OpenCodeAdapter
  */
+import { Context } from "effect";
 import type { ProviderAdapterError } from "../Errors.ts";
 import type { ProviderAdapterShape } from "./ProviderAdapter.ts";
 
@@ -17,3 +18,11 @@ import type { ProviderAdapterShape } from "./ProviderAdapter.ts";
  * a branded driver kind as the nominal discriminant.
  */
 export interface OpenCodeAdapterShape extends ProviderAdapterShape<ProviderAdapterError> {}
+
+/**
+ * Compatibility service tag retained for the legacy `OpenCodeAdapterLive`
+ * layer and its tests. New runtime code should prefer `makeOpenCodeAdapter`.
+ */
+export class OpenCodeAdapter extends Context.Service<OpenCodeAdapter, OpenCodeAdapterShape>()(
+  "t3/provider/Services/OpenCodeAdapter",
+) {}

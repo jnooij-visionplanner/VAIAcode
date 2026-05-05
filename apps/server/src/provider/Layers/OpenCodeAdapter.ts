@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 
 import {
   EventId,
+  type OpenCodeSettings,
   type ProviderRuntimeEvent,
   type ProviderSession,
   RuntimeItemId,
@@ -89,8 +90,26 @@ interface OpenCodeSessionContext {
 }
 
 export interface OpenCodeAdapterLiveOptions {
+  readonly instanceId?: string;
+  readonly environment?: NodeJS.ProcessEnv;
   readonly nativeEventLogPath?: string;
   readonly nativeEventLogger?: EventNdjsonLogger;
+}
+
+export function makeOpenCodeAdapter(
+  openCodeSettings: OpenCodeSettings,
+  options?: OpenCodeAdapterLiveOptions,
+) {
+  return Effect.gen(function* () {
+    const context = yield* Layer.build(
+      makeOpenCodeAdapterLive(options).pipe(
+        Layer.provide(
+          ServerSettingsService.layerTest({ providers: { opencode: openCodeSettings } }),
+        ),
+      ),
+    );
+    return yield* Effect.service(OpenCodeAdapter).pipe(Effect.provide(context));
+  });
 }
 
 function nowIso(): string {

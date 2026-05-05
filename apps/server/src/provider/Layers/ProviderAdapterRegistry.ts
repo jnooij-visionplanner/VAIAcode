@@ -45,6 +45,9 @@ const makeProviderAdapterRegistry = Effect.fn("makeProviderAdapterRegistry")(fun
       ),
     );
 
+  const getByProvider: ProviderAdapterRegistryShape["getByProvider"] = (provider) =>
+    getByInstance(defaultInstanceIdForDriver(provider));
+
   const getInstanceInfo: ProviderAdapterRegistryShape["getInstanceInfo"] = (instanceId) =>
     registry.getInstance(instanceId).pipe(
       Effect.flatMap((instance) =>
@@ -89,6 +92,7 @@ const makeProviderAdapterRegistry = Effect.fn("makeProviderAdapterRegistry")(fun
 
   return {
     getByInstance,
+    getByProvider,
     getInstanceInfo,
     listInstances,
     listProviders,

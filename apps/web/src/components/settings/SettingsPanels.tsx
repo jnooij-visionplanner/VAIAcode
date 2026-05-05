@@ -11,9 +11,10 @@ import {
 import { useQueryClient } from "@tanstack/react-query";
 import { type ReactNode, useCallback, useMemo, useRef, useState } from "react";
 import {
+  defaultInstanceIdForDriver,
   type DesktopUpdateChannel,
+  ProviderDriverKind,
   type ScopedThreadRef,
-  type ProviderKind,
   type ServerProvider,
   type ServerProviderModel,
 } from "@t3tools/contracts";
@@ -42,10 +43,11 @@ import {
 } from "../../lib/desktopUpdateReactQuery";
 import {
   MAX_CUSTOM_MODEL_LENGTH,
-  getCustomModelOptionsByProvider,
+  getCustomModelOptionsByInstance,
   resolveAppModelSelectionState,
 } from "../../modelSelection";
 import { ensureLocalApi, readLocalApi } from "../../localApi";
+import { deriveProviderInstanceEntries } from "../../providerInstances";
 import { useShallow } from "zustand/react/shallow";
 import {
   selectProjectsAcrossEnvironments,
@@ -70,6 +72,7 @@ import {
   SettingsSection,
   useRelativeTimeTick,
 } from "./settingsLayout";
+import { buildProviderInstanceUpdatePatch } from "./SettingsPanels.logic";
 import { ProjectFavicon } from "../ProjectFavicon";
 import {
   useServerAvailableEditors,
@@ -77,7 +80,7 @@ import {
   useServerObservability,
   useServerProviders,
 } from "../../rpc/serverState";
-import { formatProviderKindLabel } from "../../providerModels";
+import { formatProviderDriverKindLabel } from "../../providerModels";
 
 const THEME_OPTIONS = [
   {
@@ -101,7 +104,7 @@ const TIMESTAMP_FORMAT_LABELS = {
 } as const;
 
 type InstallProviderSettings = {
-  provider: ProviderKind;
+  provider: BuiltInProviderKey;
   title: string;
   badgeLabel?: string;
   binaryPlaceholder: string;
@@ -114,6 +117,48 @@ type InstallProviderSettings = {
   homePlaceholder?: string;
   homeDescription?: ReactNode;
 };
+
+type BuiltInProviderKey = keyof typeof DEFAULT_UNIFIED_SETTINGS.providers;
+type BuiltInProviderSettings<K extends BuiltInProviderKey = BuiltInProviderKey> =
+  (typeof DEFAULT_UNIFIED_SETTINGS.providers)[K];
+
+function toBuiltInProviderDriverKind(provider: BuiltInProviderKey): ProviderDriverKind {
+  return ProviderDriverKind.make(provider);
+}
+
+function getDefaultInstanceIdForBuiltInProvider(provider: BuiltInProviderKey) {
+  return defaultInstanceIdForDriver(toBuiltInProviderDriverKind(provider));
+}
+
+function isBuiltInProviderConfigRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function resolveEffectiveBuiltInProviderConfig<K extends BuiltInProviderKey>(
+  settings: Pick<typeof DEFAULT_UNIFIED_SETTINGS, "providers" | "providerInstances">,
+  provider: K,
+): BuiltInProviderSettings<K> {
+  const legacyConfig = settings.providers[provider];
+  const defaultConfig = DEFAULT_UNIFIED_SETTINGS.providers[provider];
+  const instanceEntry = settings.providerInstances[getDefaultInstanceIdForBuiltInProvider(provider)];
+
+  if (instanceEntry?.driver !== toBuiltInProviderDriverKind(provider)) {
+    return legacyConfig;
+  }
+
+  const typedConfig = isBuiltInProviderConfigRecord(instanceEntry.config)
+    ? (instanceEntry.config as Partial<BuiltInProviderSettings<K>>)
+    : {};
+  const configEnabled =
+    typeof typedConfig.enabled === "boolean" ? typedConfig.enabled : undefined;
+  const enabled = typeof instanceEntry.enabled === "boolean" ? instanceEntry.enabled : configEnabled;
+
+  return {
+    ...defaultConfig,
+    ...typedConfig,
+    ...(enabled === undefined ? {} : { enabled }),
+  };
+}
 
 const PROVIDER_SETTINGS: readonly InstallProviderSettings[] = [
   {
@@ -459,7 +504,10 @@ export function useSettingsRestore(onRestored?: () => void) {
     DEFAULT_UNIFIED_SETTINGS.textGenerationModelSelection ?? null,
   );
   const areProviderSettingsDirty = PROVIDER_SETTINGS.some((providerSettings) => {
-    const currentSettings = settings.providers[providerSettings.provider];
+    const currentSettings = resolveEffectiveBuiltInProviderConfig(
+      settings,
+      providerSettings.provider,
+    );
     const defaultSettings = DEFAULT_UNIFIED_SETTINGS.providers[providerSettings.provider];
     return !Equal.equals(currentSettings, defaultSettings);
   });
@@ -541,35 +589,28 @@ export function GeneralSettingsPanel() {
   const [openPathErrorByTarget, setOpenPathErrorByTarget] = useState<
     Partial<Record<"keybindings" | "logsDirectory", string | null>>
   >({});
-  const [openProviderDetails, setOpenProviderDetails] = useState<Record<ProviderKind, boolean>>({
-    codex: Boolean(
-      settings.providers.codex.binaryPath !== DEFAULT_UNIFIED_SETTINGS.providers.codex.binaryPath ||
-      settings.providers.codex.homePath !== DEFAULT_UNIFIED_SETTINGS.providers.codex.homePath ||
-      settings.providers.codex.customModels.length > 0,
-    ),
-    claudeAgent: Boolean(
-      settings.providers.claudeAgent.binaryPath !==
-        DEFAULT_UNIFIED_SETTINGS.providers.claudeAgent.binaryPath ||
-      settings.providers.claudeAgent.customModels.length > 0 ||
-      settings.providers.claudeAgent.launchArgs !== "",
-    ),
-    cursor: Boolean(
-      settings.providers.cursor.binaryPath !==
-        DEFAULT_UNIFIED_SETTINGS.providers.cursor.binaryPath ||
-      settings.providers.cursor.customModels.length > 0,
-    ),
-    opencode: Boolean(
-      settings.providers.opencode.binaryPath !==
-        DEFAULT_UNIFIED_SETTINGS.providers.opencode.binaryPath ||
-      settings.providers.opencode.serverUrl !==
-        DEFAULT_UNIFIED_SETTINGS.providers.opencode.serverUrl ||
-      settings.providers.opencode.serverPassword !==
-        DEFAULT_UNIFIED_SETTINGS.providers.opencode.serverPassword ||
-      settings.providers.opencode.customModels.length > 0,
-    ),
-  });
+  const [openProviderDetails, setOpenProviderDetails] = useState<Record<BuiltInProviderKey, boolean>>(
+    () => ({
+      codex: !Equal.equals(
+        resolveEffectiveBuiltInProviderConfig(settings, "codex"),
+        DEFAULT_UNIFIED_SETTINGS.providers.codex,
+      ),
+      claudeAgent: !Equal.equals(
+        resolveEffectiveBuiltInProviderConfig(settings, "claudeAgent"),
+        DEFAULT_UNIFIED_SETTINGS.providers.claudeAgent,
+      ),
+      cursor: !Equal.equals(
+        resolveEffectiveBuiltInProviderConfig(settings, "cursor"),
+        DEFAULT_UNIFIED_SETTINGS.providers.cursor,
+      ),
+      opencode: !Equal.equals(
+        resolveEffectiveBuiltInProviderConfig(settings, "opencode"),
+        DEFAULT_UNIFIED_SETTINGS.providers.opencode,
+      ),
+    }),
+  );
   const [customModelInputByProvider, setCustomModelInputByProvider] = useState<
-    Record<ProviderKind, string>
+    Record<BuiltInProviderKey, string>
   >({
     codex: "",
     claudeAgent: "",
@@ -577,11 +618,11 @@ export function GeneralSettingsPanel() {
     opencode: "",
   });
   const [customModelErrorByProvider, setCustomModelErrorByProvider] = useState<
-    Partial<Record<ProviderKind, string | null>>
+    Partial<Record<BuiltInProviderKey, string | null>>
   >({});
   const [isRefreshingProviders, setIsRefreshingProviders] = useState(false);
   const refreshingRef = useRef(false);
-  const modelListRefs = useRef<Partial<Record<ProviderKind, HTMLDivElement | null>>>({});
+  const modelListRefs = useRef<Partial<Record<BuiltInProviderKey, HTMLDivElement | null>>>({});
   const refreshProviders = useCallback(() => {
     if (refreshingRef.current) return;
     refreshingRef.current = true;
@@ -601,10 +642,20 @@ export function GeneralSettingsPanel() {
   const availableEditors = useServerAvailableEditors();
   const observability = useServerObservability();
   const serverProviders = useServerProviders();
+  const instanceEntries = useMemo(
+    () => deriveProviderInstanceEntries(serverProviders),
+    [serverProviders],
+  );
+  const findBuiltInProviderSnapshot = useCallback(
+    (provider: BuiltInProviderKey) => {
+      const defaultInstanceId = getDefaultInstanceIdForBuiltInProvider(provider);
+      return instanceEntries.find((entry) => entry.instanceId === defaultInstanceId)?.snapshot;
+    },
+    [instanceEntries],
+  );
   const visibleProviderSettings = PROVIDER_SETTINGS.filter(
     (providerSettings) =>
-      providerSettings.provider !== "cursor" ||
-      serverProviders.some((provider) => provider.provider === "cursor"),
+      providerSettings.provider !== "cursor" || findBuiltInProviderSnapshot("cursor") !== undefined,
   );
   const codexHomePath = settings.providers.codex.homePath;
   const logsDirectoryPath = observability?.logsDirectoryPath ?? null;
@@ -621,18 +672,61 @@ export function GeneralSettingsPanel() {
   })();
 
   const textGenerationModelSelection = resolveAppModelSelectionState(settings, serverProviders);
-  const textGenProvider = textGenerationModelSelection.provider;
+  const textGenInstanceId = textGenerationModelSelection.instanceId;
   const textGenModel = textGenerationModelSelection.model;
   const textGenModelOptions = textGenerationModelSelection.options;
-  const gitModelOptionsByProvider = getCustomModelOptionsByProvider(
+  const textGenInstanceEntry =
+    instanceEntries.find((entry) => entry.instanceId === textGenInstanceId) ?? null;
+  const textGenDriverKind = textGenInstanceEntry?.driverKind ?? ProviderDriverKind.make("codex");
+  const modelOptionsByInstance = getCustomModelOptionsByInstance(
     settings,
     serverProviders,
-    textGenProvider,
+    textGenInstanceId,
     textGenModel,
   );
   const isGitWritingModelDirty = !Equal.equals(
     settings.textGenerationModelSelection ?? null,
     DEFAULT_UNIFIED_SETTINGS.textGenerationModelSelection ?? null,
+  );
+  const updateBuiltInProviderSettings = useCallback(
+    function updateBuiltInProviderSettings<K extends BuiltInProviderKey>(
+      provider: K,
+      transform: (current: BuiltInProviderSettings<K>) => BuiltInProviderSettings<K>,
+      options?: {
+        textGenerationModelSelection?: typeof settings.textGenerationModelSelection;
+      },
+    ) {
+      const currentConfig = resolveEffectiveBuiltInProviderConfig(settings, provider);
+      const nextConfig = transform(currentConfig);
+      const driver = toBuiltInProviderDriverKind(provider);
+      const instanceId = getDefaultInstanceIdForBuiltInProvider(provider);
+      const existingInstance = settings.providerInstances[instanceId];
+
+      updateSettings(
+        buildProviderInstanceUpdatePatch({
+          settings,
+          instanceId,
+          instance: {
+            driver,
+            ...(existingInstance?.displayName !== undefined
+              ? { displayName: existingInstance.displayName }
+              : {}),
+            ...(existingInstance?.accentColor !== undefined
+              ? { accentColor: existingInstance.accentColor }
+              : {}),
+            ...(existingInstance?.environment !== undefined
+              ? { environment: existingInstance.environment }
+              : {}),
+            enabled: nextConfig.enabled,
+            config: nextConfig,
+          },
+          driver,
+          isDefault: true,
+          textGenerationModelSelection: options?.textGenerationModelSelection,
+        }),
+      );
+    },
+    [settings, updateSettings],
   );
 
   const openInPreferredEditor = useCallback(
@@ -680,10 +774,14 @@ export function GeneralSettingsPanel() {
   const isOpeningLogsDirectory = openingPathByTarget.logsDirectory;
 
   const addCustomModel = useCallback(
-    (provider: ProviderKind) => {
+    (provider: BuiltInProviderKey) => {
       const customModelInput = customModelInputByProvider[provider];
-      const customModels = settings.providers[provider].customModels;
-      const normalized = normalizeModelSlug(customModelInput, provider);
+      const providerConfig = resolveEffectiveBuiltInProviderConfig(settings, provider);
+      const customModels = providerConfig.customModels;
+      const normalized = normalizeModelSlug(
+        customModelInput,
+        toBuiltInProviderDriverKind(provider),
+      );
       if (!normalized) {
         setCustomModelErrorByProvider((existing) => ({
           ...existing,
@@ -692,9 +790,9 @@ export function GeneralSettingsPanel() {
         return;
       }
       if (
-        serverProviders
-          .find((candidate) => candidate.provider === provider)
-          ?.models.some((option) => !option.isCustom && option.slug === normalized)
+        findBuiltInProviderSnapshot(provider)?.models.some(
+          (option) => !option.isCustom && option.slug === normalized,
+        )
       ) {
         setCustomModelErrorByProvider((existing) => ({
           ...existing,
@@ -717,15 +815,10 @@ export function GeneralSettingsPanel() {
         return;
       }
 
-      updateSettings({
-        providers: {
-          ...settings.providers,
-          [provider]: {
-            ...settings.providers[provider],
-            customModels: [...customModels, normalized],
-          },
-        },
-      });
+      updateBuiltInProviderSettings(provider, (current) => ({
+        ...current,
+        customModels: [...customModels, normalized],
+      }));
       setCustomModelInputByProvider((existing) => ({
         ...existing,
         [provider]: "",
@@ -746,35 +839,28 @@ export function GeneralSettingsPanel() {
       observer.observe(el, { childList: true, subtree: true });
       setTimeout(() => observer.disconnect(), 2_000);
     },
-    [customModelInputByProvider, serverProviders, settings, updateSettings],
+    [customModelInputByProvider, findBuiltInProviderSnapshot, settings, updateBuiltInProviderSettings],
   );
 
   const removeCustomModel = useCallback(
-    (provider: ProviderKind, slug: string) => {
-      updateSettings({
-        providers: {
-          ...settings.providers,
-          [provider]: {
-            ...settings.providers[provider],
-            customModels: settings.providers[provider].customModels.filter(
-              (model) => model !== slug,
-            ),
-          },
-        },
-      });
+    (provider: BuiltInProviderKey, slug: string) => {
+      updateBuiltInProviderSettings(provider, (current) => ({
+        ...current,
+        customModels: current.customModels.filter((model) => model !== slug),
+      }));
       setCustomModelErrorByProvider((existing) => ({
         ...existing,
         [provider]: null,
       }));
     },
-    [settings, updateSettings],
+    [updateBuiltInProviderSettings],
   );
 
   const providerCards = visibleProviderSettings.map((providerSettings) => {
-    const liveProvider = serverProviders.find(
-      (candidate) => candidate.provider === providerSettings.provider,
-    );
-    const providerConfig = settings.providers[providerSettings.provider];
+    const driverKind = toBuiltInProviderDriverKind(providerSettings.provider);
+    const defaultInstanceId = getDefaultInstanceIdForBuiltInProvider(providerSettings.provider);
+    const liveProvider = findBuiltInProviderSnapshot(providerSettings.provider);
+    const providerConfig = resolveEffectiveBuiltInProviderConfig(settings, providerSettings.provider);
     const defaultProviderConfig = DEFAULT_UNIFIED_SETTINGS.providers[providerSettings.provider];
     const statusKey = liveProvider?.status ?? (providerConfig.enabled ? "warning" : "disabled");
     const summary = getProviderSummary(liveProvider);
@@ -789,6 +875,8 @@ export function GeneralSettingsPanel() {
 
     return {
       provider: providerSettings.provider,
+      driverKind,
+      defaultInstanceId,
       title: providerSettings.title,
       badgeLabel: providerSettings.badgeLabel,
       binaryPlaceholder: providerSettings.binaryPlaceholder,
@@ -801,8 +889,10 @@ export function GeneralSettingsPanel() {
       homePlaceholder: providerSettings.homePlaceholder,
       homeDescription: providerSettings.homeDescription,
       binaryPathValue: providerConfig.binaryPath,
+      homePathValue: "homePath" in providerConfig ? providerConfig.homePath : "",
       serverUrlValue: "serverUrl" in providerConfig ? providerConfig.serverUrl : "",
       serverPasswordValue: "serverPassword" in providerConfig ? providerConfig.serverPassword : "",
+      launchArgsValue: "launchArgs" in providerConfig ? providerConfig.launchArgs : "",
       isDirty: !Equal.equals(providerConfig, defaultProviderConfig),
       liveProvider,
       models,
@@ -1116,19 +1206,19 @@ export function GeneralSettingsPanel() {
           control={
             <div className="flex flex-wrap items-center justify-end gap-1.5">
               <ProviderModelPicker
-                provider={textGenProvider}
+                activeInstanceId={textGenInstanceId}
                 model={textGenModel}
                 lockedProvider={null}
-                providers={serverProviders}
-                modelOptionsByProvider={gitModelOptionsByProvider}
+                instanceEntries={instanceEntries}
+                modelOptionsByInstance={modelOptionsByInstance}
                 triggerVariant="outline"
                 triggerClassName="min-w-0 max-w-none shrink-0 text-foreground/90 hover:text-foreground"
-                onProviderModelChange={(provider, model) => {
+                onInstanceModelChange={(instanceId, model) => {
                   updateSettings({
                     textGenerationModelSelection: resolveAppModelSelectionState(
                       {
                         ...settings,
-                        textGenerationModelSelection: createModelSelection(provider, model),
+                        textGenerationModelSelection: createModelSelection(instanceId, model),
                       },
                       serverProviders,
                     ),
@@ -1136,11 +1226,8 @@ export function GeneralSettingsPanel() {
                 }}
               />
               <TraitsPicker
-                provider={textGenProvider}
-                models={
-                  serverProviders.find((provider) => provider.provider === textGenProvider)
-                    ?.models ?? []
-                }
+                provider={textGenDriverKind}
+                models={textGenInstanceEntry?.models ?? []}
                 model={textGenModel}
                 prompt=""
                 onPromptChange={() => {}}
@@ -1154,7 +1241,7 @@ export function GeneralSettingsPanel() {
                       {
                         ...settings,
                         textGenerationModelSelection: createModelSelection(
-                          textGenProvider,
+                          textGenInstanceId,
                           textGenModel,
                           nextOptions,
                         ),
@@ -1204,7 +1291,7 @@ export function GeneralSettingsPanel() {
           const providerDisplayName =
             providerCard.liveProvider?.displayName?.trim() ||
             providerCard.title ||
-            formatProviderKindLabel(providerCard.provider);
+            formatProviderDriverKindLabel(providerCard.driverKind);
 
           return (
             <div key={providerCard.provider} className="border-t border-border first:border-t-0">
@@ -1231,13 +1318,10 @@ export function GeneralSettingsPanel() {
                           <SettingResetButton
                             label={`${providerDisplayName} provider settings`}
                             onClick={() => {
-                              updateSettings({
-                                providers: {
-                                  ...settings.providers,
-                                  [providerCard.provider]:
-                                    DEFAULT_UNIFIED_SETTINGS.providers[providerCard.provider],
-                                },
-                              });
+                              updateBuiltInProviderSettings(
+                                providerCard.provider,
+                                () => DEFAULT_UNIFIED_SETTINGS.providers[providerCard.provider],
+                              );
                               setCustomModelErrorByProvider((existing) => ({
                                 ...existing,
                                 [providerCard.provider]: null,
@@ -1277,22 +1361,20 @@ export function GeneralSettingsPanel() {
                       onCheckedChange={(checked) => {
                         const isDisabling = !checked;
                         const shouldClearModelSelection =
-                          isDisabling && textGenProvider === providerCard.provider;
-                        updateSettings({
-                          providers: {
-                            ...settings.providers,
-                            [providerCard.provider]: {
-                              ...settings.providers[providerCard.provider],
-                              enabled: Boolean(checked),
-                            },
-                          },
-                          ...(shouldClearModelSelection
+                          isDisabling && textGenInstanceId === providerCard.defaultInstanceId;
+                        updateBuiltInProviderSettings(
+                          providerCard.provider,
+                          (current) => ({
+                            ...current,
+                            enabled: Boolean(checked),
+                          }),
+                          shouldClearModelSelection
                             ? {
                                 textGenerationModelSelection:
                                   DEFAULT_UNIFIED_SETTINGS.textGenerationModelSelection,
                               }
-                            : {}),
-                        });
+                            : undefined,
+                        );
                       }}
                       aria-label={`Enable ${providerDisplayName}`}
                     />
@@ -1324,15 +1406,10 @@ export function GeneralSettingsPanel() {
                           className="mt-1.5"
                           value={providerCard.binaryPathValue}
                           onChange={(event) =>
-                            updateSettings({
-                              providers: {
-                                ...settings.providers,
-                                [providerCard.provider]: {
-                                  ...settings.providers[providerCard.provider],
-                                  binaryPath: event.target.value,
-                                },
-                              },
-                            })
+                            updateBuiltInProviderSettings(providerCard.provider, (current) => ({
+                              ...current,
+                              binaryPath: event.target.value,
+                            }))
                           }
                           placeholder={providerCard.binaryPlaceholder}
                           spellCheck={false}
@@ -1357,17 +1434,11 @@ export function GeneralSettingsPanel() {
                             className="mt-1.5"
                             value={providerCard.serverUrlValue}
                             onChange={(event) =>
-                              updateSettings({
-                                providers: {
-                                  ...settings.providers,
-                                  [providerCard.provider]: {
-                                    ...settings.providers[providerCard.provider],
-                                    ...(providerCard.provider === "opencode"
-                                      ? { serverUrl: event.target.value }
-                                      : {}),
-                                  },
-                                },
-                              })
+                              updateBuiltInProviderSettings(providerCard.provider, (current) =>
+                                providerCard.provider === "opencode"
+                                  ? { ...current, serverUrl: event.target.value }
+                                  : current,
+                              )
                             }
                             placeholder={providerCard.serverUrlPlaceholder}
                             spellCheck={false}
@@ -1397,17 +1468,11 @@ export function GeneralSettingsPanel() {
                             autoComplete="off"
                             value={providerCard.serverPasswordValue}
                             onChange={(event) =>
-                              updateSettings({
-                                providers: {
-                                  ...settings.providers,
-                                  [providerCard.provider]: {
-                                    ...settings.providers[providerCard.provider],
-                                    ...(providerCard.provider === "opencode"
-                                      ? { serverPassword: event.target.value }
-                                      : {}),
-                                  },
-                                },
-                              })
+                              updateBuiltInProviderSettings(providerCard.provider, (current) =>
+                                providerCard.provider === "opencode"
+                                  ? { ...current, serverPassword: event.target.value }
+                                  : current,
+                              )
                             }
                             placeholder={providerCard.serverPasswordPlaceholder}
                             spellCheck={false}
@@ -1433,17 +1498,13 @@ export function GeneralSettingsPanel() {
                           <Input
                             id={`provider-install-${providerCard.homePathKey}`}
                             className="mt-1.5"
-                            value={codexHomePath}
+                            value={providerCard.homePathValue}
                             onChange={(event) =>
-                              updateSettings({
-                                providers: {
-                                  ...settings.providers,
-                                  codex: {
-                                    ...settings.providers.codex,
-                                    homePath: event.target.value,
-                                  },
-                                },
-                              })
+                              updateBuiltInProviderSettings(providerCard.provider, (current) =>
+                                providerCard.provider === "codex"
+                                  ? { ...current, homePath: event.target.value }
+                                  : current,
+                              )
                             }
                             placeholder={providerCard.homePlaceholder}
                             spellCheck={false}
@@ -1466,17 +1527,13 @@ export function GeneralSettingsPanel() {
                           <Input
                             id="provider-install-claudeAgent-launch-args"
                             className="mt-1.5"
-                            value={settings.providers.claudeAgent.launchArgs}
+                            value={providerCard.launchArgsValue}
                             onChange={(event) =>
-                              updateSettings({
-                                providers: {
-                                  ...settings.providers,
-                                  claudeAgent: {
-                                    ...settings.providers.claudeAgent,
-                                    launchArgs: event.target.value,
-                                  },
-                                },
-                              })
+                              updateBuiltInProviderSettings(providerCard.provider, (current) =>
+                                providerCard.provider === "claudeAgent"
+                                  ? { ...current, launchArgs: event.target.value }
+                                  : current,
+                              )
                             }
                             placeholder="e.g. --chrome"
                             spellCheck={false}

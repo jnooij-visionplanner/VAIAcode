@@ -3,6 +3,7 @@ import { assert, it } from "@effect/vitest";
 import { ConfigProvider, Effect, Option } from "effect";
 
 import {
+  createBuildConfig,
   resolveBuildOptions,
   resolveDesktopBuildIconAssets,
   resolveDesktopProductName,
@@ -22,6 +23,14 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     assert.equal(resolveDesktopProductName("0.0.17"), "Vaia Code (Alpha)");
     assert.equal(resolveDesktopProductName("0.0.17-nightly.20260413.42"), "Vaia Code (Nightly)");
   });
+
+  it.effect("uses a Vaia-specific macOS bundle identity for desktop artifacts", () =>
+    Effect.gen(function* () {
+      const config = yield* createBuildConfig("mac", "dmg", "0.0.17", false, false, undefined);
+      assert.equal(config.appId, "com.visionplanner.vaiacode");
+      assert.equal(config.productName, "Vaia Code (Alpha)");
+    }),
+  );
 
   it("switches desktop packaging icons to the nightly artwork for nightly versions", () => {
     assert.deepStrictEqual(resolveDesktopBuildIconAssets("0.0.17"), {

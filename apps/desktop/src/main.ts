@@ -115,10 +115,12 @@ const desktopAppBranding: DesktopAppBranding = resolveDesktopAppBranding({
   appVersion: app.getVersion(),
 });
 const APP_DISPLAY_NAME = desktopAppBranding.displayName;
-const APP_USER_MODEL_ID = isDevelopment ? "com.t3tools.t3code.dev" : "com.t3tools.t3code";
-const LINUX_DESKTOP_ENTRY_NAME = isDevelopment ? "t3code-dev.desktop" : "t3code.desktop";
-const LINUX_WM_CLASS = isDevelopment ? "t3code-dev" : "t3code";
-const USER_DATA_DIR_NAME = isDevelopment ? "t3code-dev" : "t3code";
+const APP_USER_MODEL_ID = isDevelopment
+  ? "com.visionplanner.vaiacode.dev"
+  : "com.visionplanner.vaiacode";
+const LINUX_DESKTOP_ENTRY_NAME = isDevelopment ? "vaiacode-dev.desktop" : "vaiacode.desktop";
+const LINUX_WM_CLASS = isDevelopment ? "vaiacode-dev" : "vaiacode";
+const USER_DATA_DIR_NAME = isDevelopment ? "vaiacode-dev" : "vaiacode";
 const LEGACY_USER_DATA_DIR_NAME = isDevelopment ? "Vaia Code (Dev)" : "Vaia Code (Alpha)";
 const COMMIT_HASH_PATTERN = /^[0-9a-f]{7,40}$/i;
 const COMMIT_HASH_DISPLAY_LENGTH = 12;
@@ -1030,7 +1032,7 @@ function resolveIconPath(ext: "ico" | "icns" | "png"): string | null {
  * parentheses (e.g. `~/.config/Vaia Code (Alpha)` on Linux). This is
  * unfriendly for shell usage and violates Linux naming conventions.
  *
- * We override it to a clean lowercase name (`t3code`). If the legacy
+ * We override it to a clean lowercase name (`vaiacode`). If the legacy
  * directory already exists we keep using it so existing users don't
  * lose their Chromium profile data (localStorage, cookies, sessions).
  */
