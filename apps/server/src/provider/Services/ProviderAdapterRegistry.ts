@@ -51,15 +51,6 @@ export interface ProviderAdapterRegistryShape {
     instanceId: ProviderInstanceId,
   ) => Effect.Effect<ProviderAdapterShape<ProviderAdapterError>, ProviderUnsupportedError>;
 
-  /**
-   * Legacy lookup for the default instance of a provider driver kind.
-   *
-   * @deprecated Prefer `getByInstance`.
-   */
-  readonly getByProvider: (
-    provider: ProviderDriverKind,
-  ) => Effect.Effect<ProviderAdapterShape<ProviderAdapterError>, ProviderUnsupportedError>;
-
   readonly getInstanceInfo: (
     instanceId: ProviderInstanceId,
   ) => Effect.Effect<ProviderInstanceRoutingInfo, ProviderUnsupportedError>;

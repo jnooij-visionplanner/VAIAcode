@@ -1,6 +1,4 @@
-import * as nodeFs from "node:fs";
 import * as nodeOs from "node:os";
-import * as nodePath from "node:path";
 
 import type {
   CursorSettings,
@@ -14,6 +12,7 @@ import type {
 import { ProviderDriverKind } from "@t3tools/contracts";
 import type * as EffectAcpSchema from "effect-acp/schema";
 import { Cause, Effect, Exit, FileSystem, Layer, Option, Path, Result } from "effect";
+import { HttpClient } from "effect/unstable/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import {
   createModelCapabilities,
@@ -31,6 +30,10 @@ import {
   type CommandResult,
   type ServerProviderDraft,
 } from "../providerSnapshot.ts";
+import {
+  enrichProviderSnapshotWithVersionAdvisory,
+  type ProviderMaintenanceCapabilities,
+} from "../providerMaintenance.ts";
 import { AcpSessionRuntime } from "../acp/AcpSessionRuntime.ts";
 
 const PROVIDER = ProviderDriverKind.make("cursor");
@@ -109,7 +112,12 @@ function flattenSessionConfigSelectOptions(
   }
   return configOption.options.flatMap((entry) =>
     "value" in entry
-      ? [{ value: entry.value.trim(), name: entry.name.trim() } satisfies CursorSessionSelectOption]
+      ? [
+          {
+            value: entry.value.trim(),
+            name: entry.name.trim(),
+          } satisfies CursorSessionSelectOption,
+        ]
       : entry.options.map(
           (option) =>
             ({
@@ -466,12 +474,18 @@ export function resolveCursorAcpBaseModelId(model: string | null | undefined): s
 export function resolveCursorAcpConfigUpdates(
   configOptions: ReadonlyArray<EffectAcpSchema.SessionConfigOption> | null | undefined,
   selections: ReadonlyArray<ProviderOptionSelection> | null | undefined,
-): ReadonlyArray<{ readonly configId: string; readonly value: string | boolean }> {
+): ReadonlyArray<{
+  readonly configId: string;
+  readonly value: string | boolean;
+}> {
   if (!configOptions || configOptions.length === 0) {
     return [];
   }
 
-  const updates: Array<{ readonly configId: string; readonly value: string | boolean }> = [];
+  const updates: Array<{
+    readonly configId: string;
+    readonly value: string | boolean;
+  }> = [];
 
   const reasoningOption = findCursorEffortConfigOption(configOptions);
   const requestedReasoning = normalizeCursorReasoningValue(
@@ -837,14 +851,13 @@ function isCursorAboutJsonFormatUnsupported(result: CommandResult): boolean {
   );
 }
 
-function readCursorCliConfigChannel(): string | undefined {
-  try {
-    const configPath = nodePath.join(nodeOs.homedir(), ".cursor", "cli-config.json");
-    return parseCursorCliConfigChannel(nodeFs.readFileSync(configPath, "utf8"));
-  } catch {
-    return undefined;
-  }
-}
+const readCursorCliConfigChannel = Effect.fn("readCursorCliConfigChannel")(function* () {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const configPath = path.join(nodeOs.homedir(), ".cursor", "cli-config.json");
+  const raw = yield* fileSystem.readFileString(configPath).pipe(Effect.orElseSucceed(() => ""));
+  return parseCursorCliConfigChannel(raw);
+});
 
 export function getCursorParameterizedModelPickerUnsupportedMessage(input: {
   readonly version: string | null | undefined;
@@ -1016,7 +1029,11 @@ export function parseCursorAboutOutput(result: CommandResult): CursorAboutResult
   }
 
   // Any non-empty email value means authenticated.
-  return { version, status: "ready", auth: { status: "authenticated", email: userEmail } };
+  return {
+    version,
+    status: "ready",
+    auth: { status: "authenticated", email: userEmail },
+  };
 }
 
 const runCursorCommand = (
@@ -1087,6 +1104,7 @@ export const checkCursorProviderStatus = Effect.fn("checkCursorProviderStatus")(
     });
   }
 
+  // Single `agent about` probe: returns version + auth status in one call.
   const aboutProbe = yield* runCursorAboutCommand(cursorSettings, environment).pipe(
     Effect.timeoutOption(ABOUT_TIMEOUT_MS),
     Effect.result,
@@ -1128,10 +1146,11 @@ export const checkCursorProviderStatus = Effect.fn("checkCursorProviderStatus")(
   }
 
   const parsed = parseCursorAboutOutput(aboutProbe.success.value);
+  const cursorCliConfigChannel = yield* readCursorCliConfigChannel();
   const parameterizedModelPickerUnsupportedMessage =
     getCursorParameterizedModelPickerUnsupportedMessage({
       version: parsed.version,
-      channel: readCursorCliConfigChannel(),
+      channel: cursorCliConfigChannel,
     });
   if (parameterizedModelPickerUnsupportedMessage) {
     return buildServerProvider({
@@ -1151,7 +1170,6 @@ export const checkCursorProviderStatus = Effect.fn("checkCursorProviderStatus")(
       },
     });
   }
-
   let discoveredModels = Option.none<ReadonlyArray<ServerProviderModel>>();
   let discoveryWarning: string | undefined;
   if (parsed.auth.status !== "unauthenticated") {
@@ -1173,7 +1191,6 @@ export const checkCursorProviderStatus = Effect.fn("checkCursorProviderStatus")(
       discoveredModels = discoveryExit.value;
     }
   }
-
   return buildCursorProviderSnapshot({
     checkedAt,
     cursorSettings,
@@ -1190,46 +1207,81 @@ export function hasUncapturedCursorModels(snapshot: Pick<ServerProvider, "models
   return snapshot.models.some((model) => !model.isCustom && !hasCursorModelCapabilities(model));
 }
 
+/**
+ * Background capability enrichment for a Cursor snapshot.
+ *
+ * Used by `CursorDriver` as the `makeManagedServerProvider.enrichSnapshot`
+ * hook: runs the slow ACP per-model capability probe, and republishes the
+ * snapshot through `publishSnapshot` when new capabilities arrive. Skips
+ * the probe when the provider is disabled, unauthenticated, or has no
+ * uncaptured models. Keeps `EMPTY_CAPABILITIES` and the `PROVIDER` literal
+ * private to this module.
+ */
 export const enrichCursorSnapshot = (input: {
   readonly settings: CursorSettings;
   readonly environment?: NodeJS.ProcessEnv;
   readonly snapshot: ServerProvider;
+  readonly maintenanceCapabilities: ProviderMaintenanceCapabilities;
   readonly publishSnapshot: (snapshot: ServerProvider) => Effect.Effect<void>;
   readonly stampIdentity?: (snapshot: ServerProvider) => ServerProvider;
+  readonly httpClient: HttpClient.HttpClient;
 }): Effect.Effect<void, never, ChildProcessSpawner.ChildProcessSpawner> => {
   const { settings, snapshot, publishSnapshot } = input;
   const stampIdentity = input.stampIdentity ?? ((value) => value);
 
-  if (
-    !settings.enabled ||
-    snapshot.auth.status === "unauthenticated" ||
-    !hasUncapturedCursorModels(snapshot)
-  ) {
-    return Effect.void;
-  }
+  const enrichVersionAdvisory = enrichProviderSnapshotWithVersionAdvisory(
+    snapshot,
+    input.maintenanceCapabilities,
+  ).pipe(
+    Effect.provideService(HttpClient.HttpClient, input.httpClient),
+    Effect.flatMap((enrichedSnapshot) =>
+      publishSnapshot(stampIdentity(enrichedSnapshot)).pipe(Effect.as(enrichedSnapshot)),
+    ),
+    Effect.catchCause((cause) =>
+      Effect.logWarning("Cursor version advisory enrichment failed", {
+        cause: Cause.pretty(cause),
+      }).pipe(Effect.as(snapshot)),
+    ),
+  );
 
-  return discoverCursorModelCapabilitiesViaAcp(settings, snapshot.models, input.environment).pipe(
-    Effect.flatMap((discoveredModels) => {
-      if (discoveredModels.length === 0) {
+  return enrichVersionAdvisory.pipe(
+    Effect.flatMap((baseSnapshot) => {
+      if (
+        !settings.enabled ||
+        baseSnapshot.auth.status === "unauthenticated" ||
+        !hasUncapturedCursorModels(baseSnapshot)
+      ) {
         return Effect.void;
       }
-      return publishSnapshot(
-        stampIdentity({
-          ...snapshot,
-          models: providerModelsFromSettings(
-            discoveredModels,
-            PROVIDER,
-            settings.customModels,
-            EMPTY_CAPABILITIES,
-          ),
+
+      return discoverCursorModelCapabilitiesViaAcp(
+        settings,
+        baseSnapshot.models,
+        input.environment,
+      ).pipe(
+        Effect.flatMap((discoveredModels) => {
+          if (discoveredModels.length === 0) {
+            return Effect.void;
+          }
+          return publishSnapshot(
+            stampIdentity({
+              ...baseSnapshot,
+              models: providerModelsFromSettings(
+                discoveredModels,
+                PROVIDER,
+                settings.customModels,
+                EMPTY_CAPABILITIES,
+              ),
+            }),
+          );
         }),
+        Effect.catchCause((cause) =>
+          Effect.logWarning("Cursor ACP background capability enrichment failed", {
+            models: baseSnapshot.models.map((model) => model.slug),
+            cause: Cause.pretty(cause),
+          }).pipe(Effect.asVoid),
+        ),
       );
     }),
-    Effect.catchCause((cause) =>
-      Effect.logWarning("Cursor ACP background capability enrichment failed", {
-        models: snapshot.models.map((model) => model.slug),
-        cause: Cause.pretty(cause),
-      }).pipe(Effect.asVoid),
-    ),
   );
 };
