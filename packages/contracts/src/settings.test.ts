@@ -2,7 +2,12 @@ import { describe, expect, it } from "vitest";
 import { Schema } from "effect";
 
 import { ProviderInstanceId } from "./providerInstance.ts";
-import { DEFAULT_SERVER_SETTINGS, ServerSettings, ServerSettingsPatch } from "./settings.ts";
+import {
+  DEFAULT_SERVER_SETTINGS,
+  GitHubCopilotSettings,
+  ServerSettings,
+  ServerSettingsPatch,
+} from "./settings.ts";
 
 const decodeServerSettings = Schema.decodeUnknownSync(ServerSettings);
 const decodeServerSettingsPatch = Schema.decodeUnknownSync(ServerSettingsPatch);
@@ -60,6 +65,48 @@ describe("ServerSettings.providerInstances (slice-2 invariant)", () => {
         providerInstances: { "1bad": { driver: "codex" } },
       }),
     ).toThrow();
+  });
+});
+
+describe("GitHubCopilotSettings", () => {
+  it("defaults to a disabled public-preview CLI provider", () => {
+    const decoded = Schema.decodeUnknownSync(GitHubCopilotSettings)({});
+
+    expect(decoded).toEqual({
+      enabled: false,
+      binaryPath: "copilot",
+      homePath: "",
+      githubHost: "",
+      launchArgs: "",
+      customModels: [],
+    });
+  });
+
+  it("hydrates the legacy providers map and patch schema", () => {
+    const settings = decodeServerSettings({});
+    expect(settings.providers.githubCopilot.enabled).toBe(false);
+    expect(settings.providers.githubCopilot.binaryPath).toBe("copilot");
+
+    const patch = decodeServerSettingsPatch({
+      providers: {
+        githubCopilot: {
+          enabled: true,
+          binaryPath: "/opt/bin/copilot",
+          homePath: "/tmp/copilot-home",
+          githubHost: "https://github.example.com",
+          launchArgs: "--verbose",
+          customModels: ["gpt-5-preview"],
+        },
+      },
+    });
+    expect(patch.providers?.githubCopilot).toEqual({
+      enabled: true,
+      binaryPath: "/opt/bin/copilot",
+      homePath: "/tmp/copilot-home",
+      githubHost: "https://github.example.com",
+      launchArgs: "--verbose",
+      customModels: ["gpt-5-preview"],
+    });
   });
 });
 
